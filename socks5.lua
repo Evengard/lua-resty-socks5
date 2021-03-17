@@ -1,4 +1,5 @@
 local ngx = require('ngx')
+local ngx_re = require('ngx.re')
 
 local socks5 = {}
 
@@ -46,6 +47,43 @@ socks5.connect = function(cosocket, host, port)
         math.floor(port / 256), port % 256)
     cosocket:send(char(SOCKS5, TCP_CONNECTION, RESERVED,
         DOMAIN_NAME, host_length) .. host .. port_big_endian)
+    local conn_response = cosocket:receive(3)
+    if conn_response ~=
+            char(SOCKS5, REQUEST_GRANTED, RESERVED) then
+        local status = conn_response:byte(2)
+        local message = CONN_ERRORS[status] or 'Unknown error'
+        return nil, message
+    end
+    -- pop address
+    local addr_type = cosocket:receive(1)
+    if addr_type == char(DOMAIN_NAME) then
+        local addr_length = addr_type:byte(1)
+        cosocket:receive(addr_length)
+    elseif addr_type == char(IPv4) then
+        cosocket:receive(4)
+    elseif addr_type == char(IPv6) then
+        cosocket:receive(16)
+    else
+        return nil, 'Bad address type: ' .. string.byte(addr_type)
+    end
+    -- pop port
+    cosocket:receive(2)
+    return true
+end
+
+socks5.connect_ip = function(cosocket, ip, port)
+	local host = ngx_re.split(ip, "\\.");
+	local host_length = #host
+	if (host_length ~= 4) then
+		return nil, 'Bad IP format'
+	end
+	
+	local ip_encoded = char(tonumber(host[1]), tonumber(host[2]), tonumber(host[3]), tonumber(host[4]));
+	
+    local port_big_endian = char(
+        math.floor(port / 256), port % 256)
+    cosocket:send(char(SOCKS5, TCP_CONNECTION, RESERVED,
+        IPv4) .. ip_encoded .. port_big_endian)
     local conn_response = cosocket:receive(3)
     if conn_response ~=
             char(SOCKS5, REQUEST_GRANTED, RESERVED) then
